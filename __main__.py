@@ -1,129 +1,90 @@
 import pulumi
 import pulumi_aws as aws
-import json
-import mimetypes
-import os
-from pulumi_aws import s3, cloudfront
+from pulumi_synced_folder import S3BucketFolder
 
-# 1. Create an S3 bucket for the website using BucketV2 with an explicit name.
-website_bucket = s3.BucketV2("website-bucket-new",
-    bucket="website-bucket-new",  # Explicit bucket name
-    website=s3.BucketWebsiteArgs(
-        index_document="index.html",
-        error_document="error.html",
-    )
+# Import the program's configuration settings.
+config = pulumi.Config()
+path = config.get("path") or "./website"
+index_document = config.get("indexDocument") or "index.html"
+error_document = config.get("errorDocument") or "error.html"
+
+# Create an S3 bucket and configure it as a website.
+bucket = aws.s3.BucketV2("bucket")
+
+bucket_website = aws.s3.BucketWebsiteConfigurationV2("bucketWebsite",
+    bucket=bucket.bucket,
+    index_document=aws.s3.BucketWebsiteConfigurationV2IndexDocumentArgs(suffix=index_document),
+    error_document=aws.s3.BucketWebsiteConfigurationV2ErrorDocumentArgs(key=error_document),
 )
 
-# 2. Configure ownership controls for the bucket.
-#    Using "ObjectWriter" so that the uploader remains the owner.
-ownership_controls = s3.BucketOwnershipControls("ownership-controls",
-    bucket=website_bucket.id,
-    rule=s3.BucketOwnershipControlsRuleArgs(
+# Configure ownership controls for the new S3 bucket.
+ownership_controls = aws.s3.BucketOwnershipControls("ownership-controls",
+    bucket=bucket.bucket,
+    rule=aws.s3.BucketOwnershipControlsRuleArgs(
         object_ownership="ObjectWriter"
     )
 )
 
-# 3. Configure public access block settings.
-public_access_block = s3.BucketPublicAccessBlock("public-access-block",
-    bucket=website_bucket.id,
-    block_public_acls=False,
-    block_public_policy=False,
-    ignore_public_acls=False,
-    restrict_public_buckets=False
+# Configure public ACL block on the new S3 bucket.
+public_access_block = aws.s3.BucketPublicAccessBlock("public-access-block",
+    bucket=bucket.bucket,
+    block_public_acls=False
 )
 
-# 4. Apply the public-read ACL separately using BucketAclV2.
-#    Depends on the bucket, ownership controls, and public access block.
-bucket_acl = s3.BucketAclV2("bucket-acl",
-    bucket=website_bucket.id,
+# Use a synced folder to manage the files of the website.
+bucket_folder = S3BucketFolder("bucket-folder",
+    path=path,
+    bucket_name=bucket.bucket,
     acl="public-read",
-    opts=pulumi.ResourceOptions(depends_on=[website_bucket, ownership_controls, public_access_block])
+    opts=pulumi.ResourceOptions(depends_on=[ownership_controls, public_access_block])
 )
 
-# 5. Define the bucket policy to allow public read access.
-bucket_policy = s3.BucketPolicy("bucketPolicy",
-    bucket=website_bucket.id,
-    policy=website_bucket.id.apply(lambda id: json.dumps({
-        "Version": "2012-10-17",
-        "Statement": [{
-            "Effect": "Allow",
-            "Principal": "*",
-            "Action": ["s3:GetObject"],
-            "Resource": [f"arn:aws:s3:::{id}/*"]
-        }]
-    })),
-    opts=pulumi.ResourceOptions(depends_on=[website_bucket])
-)
-
-# 6. Create an Origin Access Identity (OAI) for CloudFront.
-origin_access_identity = cloudfront.OriginAccessIdentity("originAccessIdentity",
-    comment="Static website OAI"
-)
-
-# 7. Create a CloudFront distribution for the website.
-cdn = cloudfront.Distribution("cdn",
-    origins=[cloudfront.DistributionOriginArgs(
-        domain_name=website_bucket.bucket_regional_domain_name,
-        origin_id=website_bucket.bucket,
-        s3_origin_config=cloudfront.DistributionOriginS3OriginConfigArgs(
-            origin_access_identity=origin_access_identity.cloudfront_access_identity_path
+# Create a CloudFront CDN to distribute and cache the website.
+cdn = aws.cloudfront.Distribution("cdn",
+    enabled=True,
+    origins=[aws.cloudfront.DistributionOriginArgs(
+        origin_id=bucket.arn,
+        domain_name=bucket_website.website_endpoint,
+        custom_origin_config=aws.cloudfront.DistributionOriginCustomOriginConfigArgs(
+            origin_protocol_policy="http-only",
+            http_port=80,
+            https_port=443,
+            origin_ssl_protocols=["TLSv1.2"]
         )
     )],
-    enabled=True,
-    is_ipv6_enabled=True,
-    default_root_object="index.html",
-    default_cache_behavior=cloudfront.DistributionDefaultCacheBehaviorArgs(
-        allowed_methods=["GET", "HEAD", "OPTIONS"],
-        cached_methods=["GET", "HEAD"],
-        target_origin_id=website_bucket.bucket,
-        forwarded_values=cloudfront.DistributionDefaultCacheBehaviorForwardedValuesArgs(
-            query_string=False,
-            cookies=cloudfront.DistributionDefaultCacheBehaviorForwardedValuesCookiesArgs(
-                forward="none"
-            )
-        ),
+    default_cache_behavior=aws.cloudfront.DistributionDefaultCacheBehaviorArgs(
+        target_origin_id=bucket.arn,
         viewer_protocol_policy="redirect-to-https",
-        min_ttl=0,
-        default_ttl=3600,
-        max_ttl=86400
+        allowed_methods=["GET", "HEAD", "OPTIONS"],
+        cached_methods=["GET", "HEAD", "OPTIONS"],
+        default_ttl=600,
+        max_ttl=600,
+        min_ttl=600,
+        forwarded_values=aws.cloudfront.DistributionDefaultCacheBehaviorForwardedValuesArgs(
+            query_string=True,
+            cookies=aws.cloudfront.DistributionDefaultCacheBehaviorForwardedValuesCookiesArgs(
+                forward="all"
+            )
+        )
     ),
     price_class="PriceClass_100",
-    restrictions=cloudfront.DistributionRestrictionsArgs(
-        geo_restriction=cloudfront.DistributionRestrictionsGeoRestrictionArgs(
+    custom_error_responses=[aws.cloudfront.DistributionCustomErrorResponseArgs(
+        error_code=404,
+        response_code=404,
+        response_page_path=f"/{error_document}"
+    )],
+    restrictions=aws.cloudfront.DistributionRestrictionsArgs(
+        geo_restriction=aws.cloudfront.DistributionRestrictionsGeoRestrictionArgs(
             restriction_type="none"
         )
     ),
-    viewer_certificate=cloudfront.DistributionViewerCertificateArgs(
+    viewer_certificate=aws.cloudfront.DistributionViewerCertificateArgs(
         cloudfront_default_certificate=True
-    ),
-    opts=pulumi.ResourceOptions(depends_on=[website_bucket])
+    )
 )
 
-# 8. Function to upload files from a directory to the website bucket.
-def upload_directory_to_s3(directory_path, bucket_name):
-    for root, dirs, files in os.walk(directory_path):
-        for file in files:
-            file_path = os.path.join(root, file)
-            relative_path = os.path.relpath(file_path, directory_path)
-            
-            # Guess the content type; default to binary if not found.
-            content_type = mimetypes.guess_type(file_path)[0]
-            if content_type is None:
-                content_type = "application/octet-stream"
-                
-            s3.BucketObject(
-                relative_path,
-                bucket=bucket_name,
-                source=pulumi.FileAsset(file_path),
-                content_type=content_type,
-                opts=pulumi.ResourceOptions(depends_on=[website_bucket])
-            )
-
-# 9. Upload the website files from a local "website" directory.
-website_directory = "./website"
-upload_directory_to_s3(website_directory, website_bucket.id)
-
-# 10. Export the website URLs.
-pulumi.export("bucket_name", website_bucket.id)
-pulumi.export("website_url", website_bucket.website_endpoint)
-pulumi.export("cloudfront_domain", cdn.domain_name)
+# Export the URLs and hostnames of the bucket and distribution.
+pulumi.export("originURL", pulumi.Output.concat("http://", bucket_website.website_endpoint))
+pulumi.export("originHostname", bucket_website.website_endpoint)
+pulumi.export("cdnURL", pulumi.Output.concat("https://", cdn.domain_name))
+pulumi.export("cdnHostname", cdn.domain_name)
