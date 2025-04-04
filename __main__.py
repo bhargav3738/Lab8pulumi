@@ -4,6 +4,7 @@ import json
 import mimetypes
 import os
 from pulumi_aws import s3, cloudfront
+
 ##test
 # 1. Create an S3 bucket for the website with website hosting enabled.
 website_bucket = s3.Bucket("website-bucket-new",
@@ -32,9 +33,9 @@ public_access_block = s3.BucketPublicAccessBlock("public-access-block",
     restrict_public_buckets=False
 )
 
-# 4. Apply the public-read ACL separately.
+# 4. Apply the public-read ACL separately using BucketAclV2.
 #    The depends_on ensures that the ACL is applied only after the ownership and public access settings are configured.
-bucket_acl = s3.BucketAcl("bucket-acl",
+bucket_acl = s3.BucketAclV2("bucket-acl",
     bucket=website_bucket.id,
     acl="public-read",
     opts=pulumi.ResourceOptions(depends_on=[ownership_controls, public_access_block])
