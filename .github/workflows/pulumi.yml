@@ -1,44 +1,55 @@
-name: Pulumi Deploy
+name: Deploy Static Website
 
 on:
   push:
     branches:
       - main
-  pull_request:
+    paths-ignore:
+      - ".github/workflows/destroy.yml"
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     permissions:
-      id-token: write # Required for OIDC authentication
+      id-token: write
       contents: read
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Configure AWS Credentials via OIDC
-        uses: aws-actions/configure-aws-credentials@v2
-        with:
-          role-to-assume: arn:aws:iam::913524946449:role/PulumiRole
-          aws-region: us-east-1
-
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
-          python-version: "3.8"
+          python-version: "3.10"
 
-      - name: Install Dependencies
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install pulumi pulumi-aws boto3
 
-      - name: Pulumi Login
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+          role-session-name: PulumiDeployment
+
+      - name: Create sample website files if not exist
+        run: |
+          mkdir -p website
+          if [ ! -f website/index.html ]; then
+            echo "<html><body><h1>Hello from Pulumi!</h1></body></html>" > website/index.html
+          fi
+          if [ ! -f website/error.html ]; then
+            echo "<html><body><h1>Error - Page not found</h1></body></html>" > website/error.html
+          fi
+
+      - name: Deploy with Pulumi
+        uses: pulumi/actions@v4
+        with:
+          command: up
+          stack-name: dev
+          work-dir: .
         env:
           PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
-        run: pulumi login
-
-      - name: Pulumi Preview
-        run: pulumi preview --non-interactive
-
-      - name: Pulumi Up (Deploy)
-        run: pulumi up --yes --non-interactive

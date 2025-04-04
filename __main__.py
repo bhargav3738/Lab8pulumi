@@ -1,64 +1,101 @@
 import pulumi
 import pulumi_aws as aws
+import json
+import mimetypes
 import os
+from pulumi_aws import s3, cloudfront
 
-token_file_path = os.environ.get("AWS_WEB_IDENTITY_TOKEN_FILE")
-if token_file_path:
-    with open(token_file_path, "r") as token_file:
-        token = token_file.read()
-    print("OIDC token read successfully.")
-else:
-    print("Warning: AWS_WEB_IDENTITY_TOKEN_FILE not found. Ensure you're running within GitHub Actions with OIDC configured or set the variable manually.")
-
-# Create an S3 bucket for the static website
-site_bucket = aws.s3.Bucket('siteBucket',
-    website=aws.s3.BucketWebsiteArgs(
+# Create an S3 bucket for the website
+website_bucket = s3.Bucket("website-bucket",
+    website=s3.BucketWebsiteArgs(
         index_document="index.html",
-    ))
+        error_document="error.html",
+    ),
+    acl="public-read"  # Make the bucket public
+)
 
-# Upload a sample index.html file
-index_content = pulumi.Output.all().apply(
-    lambda _: "<html><body><h1>Hello from Pulumi!</h1></body></html>")
-index_object = aws.s3.BucketObject("index.html",
-    bucket=site_bucket.id,
-    content=index_content,
-    content_type="text/html")
+# Define the bucket policy to allow public read access
+bucket_policy = s3.BucketPolicy("bucketPolicy",
+    bucket=website_bucket.id,
+    policy=website_bucket.id.apply(lambda id: json.dumps({
+        "Version": "2012-10-17",
+        "Statement": [{
+            "Effect": "Allow",
+            "Principal": "*",
+            "Action": ["s3:GetObject"],
+            "Resource": [f"arn:aws:s3:::{id}/*"]
+        }]
+    }))
+)
 
-# Create a CloudFront distribution pointing to the S3 website endpoint
-cdn = aws.cloudfront.Distribution("cdnDistribution",
-    origins=[aws.cloudfront.DistributionOriginArgs(
-        domain_name=site_bucket.website_endpoint,
-        origin_id=site_bucket.id,
-        custom_origin_config=aws.cloudfront.DistributionOriginCustomOriginConfigArgs(
-            http_port=80,
-            https_port=443,
-            origin_protocol_policy="http-only",
-            origin_ssl_protocols=["TLSv1.2"],
-        ),
+# Create an origin access identity for CloudFront
+origin_access_identity = cloudfront.OriginAccessIdentity("originAccessIdentity",
+    comment="Static website OAI"
+)
+
+# Create a CloudFront distribution for the website
+cdn = cloudfront.Distribution("cdn",
+    origins=[cloudfront.DistributionOriginArgs(
+        domain_name=website_bucket.bucket_regional_domain_name,
+        origin_id=website_bucket.bucket,
+        s3_origin_config=cloudfront.DistributionOriginS3OriginConfigArgs(
+            origin_access_identity=origin_access_identity.cloudfront_access_identity_path
+        )
     )],
     enabled=True,
+    is_ipv6_enabled=True,
     default_root_object="index.html",
-    default_cache_behavior=aws.cloudfront.DistributionDefaultCacheBehaviorArgs(
-        target_origin_id=site_bucket.id,
-        viewer_protocol_policy="allow-all",
-        allowed_methods=["GET", "HEAD"],
+    default_cache_behavior=cloudfront.DistributionDefaultCacheBehaviorArgs(
+        allowed_methods=["GET", "HEAD", "OPTIONS"],
         cached_methods=["GET", "HEAD"],
-        forwarded_values=aws.cloudfront.DistributionDefaultCacheBehaviorForwardedValuesArgs(
+        target_origin_id=website_bucket.bucket,
+        forwarded_values=cloudfront.DistributionDefaultCacheBehaviorForwardedValuesArgs(
             query_string=False,
-            cookies=aws.cloudfront.DistributionDefaultCacheBehaviorForwardedValuesCookiesArgs(
-                forward="none",
-            ),
+            cookies=cloudfront.DistributionDefaultCacheBehaviorForwardedValuesCookiesArgs(
+                forward="none"
+            )
         ),
+        viewer_protocol_policy="redirect-to-https",
+        min_ttl=0,
+        default_ttl=3600,
+        max_ttl=86400
     ),
-    restrictions=aws.cloudfront.DistributionRestrictionsArgs(
-        geo_restriction=aws.cloudfront.DistributionRestrictionsGeoRestrictionArgs(
-            restriction_type="none",
-            locations=[],
-        ),
+    price_class="PriceClass_100",
+    restrictions=cloudfront.DistributionRestrictionsArgs(
+        geo_restriction=cloudfront.DistributionRestrictionsGeoRestrictionArgs(
+            restriction_type="none"
+        )
     ),
-    viewer_certificate=aws.cloudfront.DistributionViewerCertificateArgs(
-        cloudfront_default_certificate=True,
-    ))
+    viewer_certificate=cloudfront.DistributionViewerCertificateArgs(
+        cloudfront_default_certificate=True
+    )
+)
 
-pulumi.export("bucketName", site_bucket.bucket)
-pulumi.export("cloudfrontDomain", cdn.domain_name)
+# Function to upload files from a directory to the website bucket
+def upload_directory_to_s3(directory_path, bucket_name):
+    for root, dirs, files in os.walk(directory_path):
+        for file in files:
+            file_path = os.path.join(root, file)
+            relative_path = os.path.relpath(file_path, directory_path)
+            
+            content_type = mimetypes.guess_type(file_path)[0]
+            if content_type is None:
+                content_type = "application/octet-stream"
+                
+            s3.BucketObject(
+                relative_path,
+                bucket=bucket_name,
+                source=pulumi.FileAsset(file_path),
+                acl="public-read",
+                content_type=content_type
+            )
+
+# Upload the website files from a local "website" directory
+# Uncomment this section when you have website files ready
+# website_directory = "./website"
+# upload_directory_to_s3(website_directory, website_bucket.id)
+
+# Export the website URLs
+pulumi.export("bucket_name", website_bucket.id)
+pulumi.export("website_url", website_bucket.website_endpoint)
+pulumi.export("cloudfront_domain", cdn.domain_name)
