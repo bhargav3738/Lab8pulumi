@@ -1,0 +1,11 @@
+name: pulumi-s3-cloudfront
+description: Lab 8
+runtime:
+  name: python
+  options:
+    toolchain: pip
+    virtualenv: venv
+config:
+  pulumi:tags:
+    value:
+      pulumi:template: aws-python
