@@ -5,13 +5,18 @@ import mimetypes
 import os
 from pulumi_aws import s3, cloudfront
 
-# Create an S3 bucket for the website with block public access settings adjusted.
+# Create an S3 bucket for the website.
 website_bucket = s3.Bucket("website-bucket",
     website=s3.BucketWebsiteArgs(
         index_document="index.html",
         error_document="error.html",
     ),
-    acl="public-read",  # This is a simpler way to make the bucket public
+    acl="public-read"  # This is a simpler way to make the bucket public
+)
+
+# Configure public access block separately
+public_access_block = s3.BucketPublicAccessBlock("public-access-block",
+    bucket=website_bucket.id,
     block_public_acls=False,
     block_public_policy=False,
     ignore_public_acls=False,
