@@ -10,8 +10,15 @@ website_bucket = s3.Bucket("website-bucket",
     website=s3.BucketWebsiteArgs(
         index_document="index.html",
         error_document="error.html",
-    ),
-    acl="public-read"  # This is a simpler way to make the bucket public
+    )
+)
+
+# Configure ownership controls for the bucket
+ownership_controls = s3.BucketOwnershipControls("ownership-controls",
+    bucket=website_bucket.id,
+    rule=s3.BucketOwnershipControlsRuleArgs(
+        object_ownership="ObjectWriter"
+    )
 )
 
 # Configure public access block separately
@@ -21,6 +28,13 @@ public_access_block = s3.BucketPublicAccessBlock("public-access-block",
     block_public_policy=False,
     ignore_public_acls=False,
     restrict_public_buckets=False
+)
+
+# Set the ACL after creating the bucket and configuring ownership
+bucket_acl = s3.BucketAcl("bucket-acl",
+    bucket=website_bucket.id,
+    acl="public-read",
+    opts=pulumi.ResourceOptions(depends_on=[ownership_controls, public_access_block])
 )
 
 # Define the bucket policy to allow public read access.
@@ -99,9 +113,8 @@ def upload_directory_to_s3(directory_path, bucket_name):
             )
 
 # Upload the website files from a local "website" directory.
-# Uncomment these lines when you have website files ready.
-# website_directory = "./website"
-# upload_directory_to_s3(website_directory, website_bucket.id)
+website_directory = "./website"
+upload_directory_to_s3(website_directory, website_bucket.id)
 
 # Export the website URLs.
 pulumi.export("bucket_name", website_bucket.id)
