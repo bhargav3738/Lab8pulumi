@@ -3,7 +3,7 @@ import pulumi
 import pulumi_aws as aws
 
 # Create the S3 bucket with website hosting enabled
-bucket = aws.s3.Bucket("bucket",
+bucket = aws.s3.Bucket("bucket-new",
     website=aws.s3.BucketWebsiteArgs(
         index_document="index.html",
         error_document="404.html",
