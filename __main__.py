@@ -1,56 +1,3 @@
-import os
-import pulumi
-import pulumi_aws as aws
-
-# Create the S3 bucket with website hosting enabled
-bucket = aws.s3.Bucket("bucket-new",
-    website=aws.s3.BucketWebsiteArgs(
-        index_document="index.html",
-        error_document="404.html",
-    )
-)
-
-# Set ownership controls on the bucket
-ownership_controls = aws.s3.BucketOwnershipControls(
-    "ownership-controls",
-    bucket=bucket.bucket,
-    rule=aws.s3.BucketOwnershipControlsRuleArgs(
-        object_ownership="BucketOwnerPreferred"
-    )
-)
-
-# Configure public access block (customize as needed)
-public_access_block = aws.s3.BucketPublicAccessBlock(
-    "public-access-block",
-    bucket=bucket.bucket,
-    block_public_acls=False,
-    block_public_policy=False,
-    ignore_public_acls=False,
-    restrict_public_buckets=False
-)
-
-# Function to sync local folder content to the S3 bucket
-def sync_folder_to_s3(local_path, bucket_name, depends_on):
-    for root, dirs, files in os.walk(local_path):
-        for file in files:
-            local_file_path = os.path.join(root, file)
-            s3_key = os.path.relpath(local_file_path, local_path)
-            aws.s3.BucketObject(
-                s3_key,
-                bucket=bucket_name,
-                key=s3_key,
-                source=pulumi.FileAsset(local_file_path),
-                acl="public-read",
-                opts=pulumi.ResourceOptions(depends_on=depends_on)
-            )
-
-# Specify your local folder to sync
-path = "./index.html"  # Replace with your actual folder path
-
-# Sync the folder to the S3 bucket
-sync_folder_to_s3(path, bucket.bucket, [ownership_controls, public_access_block])
-
-# Create a CloudFront distribution to serve the static website
 cdn = aws.cloudfront.Distribution("cdn",
     origins=[aws.cloudfront.DistributionOriginArgs(
         # Use the S3 website endpoint as the custom origin domain name
@@ -79,12 +26,12 @@ cdn = aws.cloudfront.Distribution("cdn",
             )
         )
     ),
+    restrictions=aws.cloudfront.DistributionRestrictionsArgs(
+        geo_restriction=aws.cloudfront.DistributionRestrictionsGeoRestrictionArgs(
+            restriction_type="none"
+        )
+    ),
     viewer_certificate=aws.cloudfront.DistributionViewerCertificateArgs(
         cloudfront_default_certificate=True
     )
 )
-
-# Export useful outputs
-pulumi.export("bucket_name", bucket.bucket)
-pulumi.export("website_url", bucket.website_endpoint)
-pulumi.export("cdn_url", cdn.domain_name)
