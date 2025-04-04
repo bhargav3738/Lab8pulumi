@@ -5,16 +5,15 @@ import mimetypes
 import os
 from pulumi_aws import s3, cloudfront
 
-# Create an S3 bucket for the website
+# Create an S3 bucket for the website without an ACL property.
 website_bucket = s3.Bucket("website-bucket",
     website=s3.BucketWebsiteArgs(
         index_document="index.html",
         error_document="error.html",
-    ),
-    acl="public-read"  # Make the bucket public
+    )
 )
 
-# Define the bucket policy to allow public read access
+# Define the bucket policy to allow public read access.
 bucket_policy = s3.BucketPolicy("bucketPolicy",
     bucket=website_bucket.id,
     policy=website_bucket.id.apply(lambda id: json.dumps({
@@ -28,12 +27,12 @@ bucket_policy = s3.BucketPolicy("bucketPolicy",
     }))
 )
 
-# Create an origin access identity for CloudFront
+# Create an Origin Access Identity for CloudFront.
 origin_access_identity = cloudfront.OriginAccessIdentity("originAccessIdentity",
     comment="Static website OAI"
 )
 
-# Create a CloudFront distribution for the website
+# Create a CloudFront distribution for the website.
 cdn = cloudfront.Distribution("cdn",
     origins=[cloudfront.DistributionOriginArgs(
         domain_name=website_bucket.bucket_regional_domain_name,
@@ -71,7 +70,7 @@ cdn = cloudfront.Distribution("cdn",
     )
 )
 
-# Function to upload files from a directory to the website bucket
+# Function to upload files from a directory to the website bucket.
 def upload_directory_to_s3(directory_path, bucket_name):
     for root, dirs, files in os.walk(directory_path):
         for file in files:
@@ -86,16 +85,15 @@ def upload_directory_to_s3(directory_path, bucket_name):
                 relative_path,
                 bucket=bucket_name,
                 source=pulumi.FileAsset(file_path),
-                acl="public-read",
                 content_type=content_type
             )
 
-# Upload the website files from a local "website" directory
-# Uncomment this section when you have website files ready
+# Upload the website files from a local "website" directory.
+# Uncomment the following lines when you have website files ready.
 # website_directory = "./website"
 # upload_directory_to_s3(website_directory, website_bucket.id)
 
-# Export the website URLs
+# Export the website URLs.
 pulumi.export("bucket_name", website_bucket.id)
 pulumi.export("website_url", website_bucket.website_endpoint)
 pulumi.export("cloudfront_domain", cdn.domain_name)
