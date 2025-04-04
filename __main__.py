@@ -6,7 +6,7 @@ import os
 from pulumi_aws import s3, cloudfront
 ##test
 # 1. Create an S3 bucket for the website with website hosting enabled.
-website_bucket = s3.Bucket("website-bucket",
+website_bucket = s3.Bucket("website-bucket-new",
     website=s3.BucketWebsiteArgs(
         index_document="index.html",
         error_document="error.html",
