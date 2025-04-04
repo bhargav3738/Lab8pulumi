@@ -5,11 +5,17 @@ import mimetypes
 import os
 from pulumi_aws import s3, cloudfront
 
-# Create an S3 bucket for the website without an ACL property.
+# Create an S3 bucket for the website with block public access settings adjusted.
 website_bucket = s3.Bucket("website-bucket",
     website=s3.BucketWebsiteArgs(
         index_document="index.html",
         error_document="error.html",
+    ),
+    blockPublicAccess=s3.BucketBlockPublicAccessArgs(
+        blockPublicAcls=False,
+        blockPublicPolicy=False,    # Disable blocking public policies.
+        ignorePublicAcls=False,
+        restrictPublicBuckets=False,
     )
 )
 
@@ -89,7 +95,7 @@ def upload_directory_to_s3(directory_path, bucket_name):
             )
 
 # Upload the website files from a local "website" directory.
-# Uncomment the following lines when you have website files ready.
+# Uncomment these lines when you have website files ready.
 # website_directory = "./website"
 # upload_directory_to_s3(website_directory, website_bucket.id)
 
