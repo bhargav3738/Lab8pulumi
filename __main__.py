@@ -1,5 +1,14 @@
 import pulumi
 import pulumi_aws as aws
+import os
+
+token_file_path = os.environ.get("AWS_WEB_IDENTITY_TOKEN_FILE")
+if token_file_path:
+    with open(token_file_path, "r") as token_file:
+        token = token_file.read()
+    print("OIDC token read successfully.")
+else:
+    print("Warning: AWS_WEB_IDENTITY_TOKEN_FILE not found. Ensure you're running within GitHub Actions with OIDC configured or set the variable manually.")
 
 # Create an S3 bucket for the static website
 site_bucket = aws.s3.Bucket('siteBucket',
