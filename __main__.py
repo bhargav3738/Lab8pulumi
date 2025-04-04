@@ -11,12 +11,11 @@ website_bucket = s3.Bucket("website-bucket",
         index_document="index.html",
         error_document="error.html",
     ),
-    blockPublicAccess=s3.BucketBlockPublicAccessArgs(
-        blockPublicAcls=False,
-        blockPublicPolicy=False,    # Disable blocking public policies.
-        ignorePublicAcls=False,
-        restrictPublicBuckets=False,
-    )
+    acl="public-read",  # This is a simpler way to make the bucket public
+    block_public_acls=False,
+    block_public_policy=False,
+    ignore_public_acls=False,
+    restrict_public_buckets=False
 )
 
 # Define the bucket policy to allow public read access.
