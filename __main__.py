@@ -1,4 +1,3 @@
-import os
 import pulumi
 import pulumi_aws as aws
 
@@ -29,37 +28,34 @@ public_access_block = aws.s3.BucketPublicAccessBlock(
     restrict_public_buckets=False
 )
 
-# Function to sync local folder content to the S3 bucket
-def sync_folder_to_s3(local_path, bucket_name, depends_on):
-    for root, dirs, files in os.walk(local_path):
-        for file in files:
-            local_file_path = os.path.join(root, file)
-            s3_key = os.path.relpath(local_file_path, local_path)
-            aws.s3.BucketObject(
-                s3_key,
-                bucket=bucket_name,
-                key=s3_key,
-                source=pulumi.FileAsset(local_file_path),
-                acl="public-read",
-                opts=pulumi.ResourceOptions(depends_on=depends_on)
-            )
+# Use the local index.html file from the root folder for the website's main page
+index_file = aws.s3.BucketObject("index-file",
+    bucket=bucket.bucket,
+    key="index.html",
+    source=pulumi.FileAsset("index.html"),  # Points to the index.html file in your root folder
+    content_type="text/html",
+    acl="public-read",
+    opts=pulumi.ResourceOptions(depends_on=[ownership_controls, public_access_block])
+)
 
-# Specify your local folder to sync
-path = "./index.html"  # Replace with your actual folder path
-
-# Sync the folder to the S3 bucket
-sync_folder_to_s3(path, bucket.bucket, [ownership_controls, public_access_block])
+# Optionally, if you also have a 404.html in the root folder, use it for the error page
+error_file = aws.s3.BucketObject("error-file",
+    bucket=bucket.bucket,
+    key="404.html",
+    source=pulumi.FileAsset("404.html"),  # Points to the 404.html file in your root folder
+    content_type="text/html",
+    acl="public-read",
+    opts=pulumi.ResourceOptions(depends_on=[ownership_controls, public_access_block])
+)
 
 # Create a CloudFront distribution to serve the static website
 cdn = aws.cloudfront.Distribution("cdn",
     origins=[aws.cloudfront.DistributionOriginArgs(
-        # Use the S3 website endpoint as the custom origin domain name
         domain_name=bucket.website_endpoint,
         origin_id=bucket.bucket,
         custom_origin_config=aws.cloudfront.DistributionOriginCustomOriginConfigArgs(
             http_port=80,
             https_port=443,
-            # S3 website endpoints only support HTTP
             origin_protocol_policy="http-only",
             origin_ssl_protocols=["TLSv1.2"],
         ),
