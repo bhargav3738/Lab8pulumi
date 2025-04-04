@@ -1,56 +1,59 @@
-import pulumi
 import pulumi_aws as aws
+import os
 
-# Create an S3 bucket for the static website
-bucket = aws.s3.Bucket("my-bucket",
-    website=aws.s3.BucketWebsiteArgs(
-        index_document="index.html",
-    )
+# Read the OIDC token from the file path provided by GitHub Actions
+with open(os.environ["AWS_WEB_IDENTITY_TOKEN_FILE"], "r") as token_file:
+    web_identity_token = token_file.read()
+
+# Create an AWS provider with OIDC authentication
+provider = aws.Provider("aws",
+    region="us-west-2",
+    assume_role_with_web_identity={
+        "role_arn": "arn:aws:iam::913524946449:role/PulumiRole",
+        "web_identity_token": web_identity_token,
+    }
 )
 
-# Upload a sample index.html file to the bucket
+# Define an S3 bucket for the static website
+bucket = aws.s3.Bucket("my-bucket",
+    website=aws.s3.BucketWebsiteArgs(index_document="index.html"),
+    opts=pulumi.ResourceOptions(provider=provider)
+)
+
+# Upload an index.html file to the bucket
 bucket_object = aws.s3.BucketObject("index.html",
     bucket=bucket.id,
     content="<html><body>Hello, World!</body></html>",
     content_type="text/html",
+    opts=pulumi.ResourceOptions(provider=provider)
 )
 
-# Create an Origin Access Identity
-oai = aws.cloudfront.OriginAccessIdentity("originAccessIdentity")
-
-# Create a CloudFront distribution with OAI
+# Create a CloudFront distribution
 distribution = aws.cloudfront.Distribution("my-distribution",
+    enabled=True,
     origins=[aws.cloudfront.DistributionOriginArgs(
         domain_name=bucket.bucket_regional_domain_name,
         origin_id=bucket.arn,
-        s3_origin_config=aws.cloudfront.DistributionOriginS3OriginConfigArgs(
-            origin_access_identity=oai.cloudfront_access_identity_path,
-        ),
     )],
-    enabled=True,
     default_root_object="index.html",
     default_cache_behavior=aws.cloudfront.DistributionDefaultCacheBehaviorArgs(
-        allowed_methods=["GET", "HEAD"],
-        cached_methods=["GET", "HEAD"],
         target_origin_id=bucket.arn,
+        viewer_protocol_policy="redirect-to-https",
+        allowed_methods=["GET", "HEAD", "OPTIONS"],
+        cached_methods=["GET", "HEAD"],
         forwarded_values=aws.cloudfront.DistributionDefaultCacheBehaviorForwardedValuesArgs(
             query_string=False,
             cookies=aws.cloudfront.DistributionDefaultCacheBehaviorForwardedValuesCookiesArgs(
-                forward="none",
+                forward="none"
             ),
         ),
-        viewer_protocol_policy="redirect-to-https",
     ),
-    restrictions=aws.cloudfront.DistributionRestrictionsArgs(
-        geo_restriction=aws.cloudfront.DistributionRestrictionsGeoRestrictionArgs(
-            restriction_type="none",
-        ),
-    ),
+    price_class="PriceClass_100",
     viewer_certificate=aws.cloudfront.DistributionViewerCertificateArgs(
         cloudfront_default_certificate=True,
     ),
+    opts=pulumi.ResourceOptions(provider=provider)
 )
 
-# Export the URLs for easy access
-pulumi.export("bucket_url", bucket.website_endpoint)
-pulumi.export("cdn_url", distribution.domain_name)
+# Export the distribution URL
+pulumi.export("distribution_url", distribution.domain_name)
