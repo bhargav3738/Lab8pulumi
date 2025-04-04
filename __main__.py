@@ -5,9 +5,9 @@ import mimetypes
 import os
 from pulumi_aws import s3, cloudfront
 
-##test
-# 1. Create an S3 bucket for the website with website hosting enabled.
-website_bucket = s3.Bucket("website-bucket-new",
+# 1. Create an S3 bucket for the website using BucketV2 with an explicit name.
+website_bucket = s3.BucketV2("website-bucket-new",
+    bucket="website-bucket-new",  # Explicit bucket name
     website=s3.BucketWebsiteArgs(
         index_document="index.html",
         error_document="error.html",
@@ -15,7 +15,7 @@ website_bucket = s3.Bucket("website-bucket-new",
 )
 
 # 2. Configure ownership controls for the bucket.
-#    Here we use "ObjectWriter" so that the uploader (or writer) remains the owner of the object.
+#    Using "ObjectWriter" so that the uploader remains the owner.
 ownership_controls = s3.BucketOwnershipControls("ownership-controls",
     bucket=website_bucket.id,
     rule=s3.BucketOwnershipControlsRuleArgs(
@@ -24,7 +24,6 @@ ownership_controls = s3.BucketOwnershipControls("ownership-controls",
 )
 
 # 3. Configure public access block settings.
-#    Disabling the blocks on public ACLs and public policies lets you later set the bucket ACL and policy.
 public_access_block = s3.BucketPublicAccessBlock("public-access-block",
     bucket=website_bucket.id,
     block_public_acls=False,
@@ -34,11 +33,11 @@ public_access_block = s3.BucketPublicAccessBlock("public-access-block",
 )
 
 # 4. Apply the public-read ACL separately using BucketAclV2.
-#    The depends_on ensures that the ACL is applied only after the ownership and public access settings are configured.
+#    Depends on the bucket, ownership controls, and public access block.
 bucket_acl = s3.BucketAclV2("bucket-acl",
     bucket=website_bucket.id,
     acl="public-read",
-    opts=pulumi.ResourceOptions(depends_on=[ownership_controls, public_access_block])
+    opts=pulumi.ResourceOptions(depends_on=[website_bucket, ownership_controls, public_access_block])
 )
 
 # 5. Define the bucket policy to allow public read access.
@@ -52,7 +51,8 @@ bucket_policy = s3.BucketPolicy("bucketPolicy",
             "Action": ["s3:GetObject"],
             "Resource": [f"arn:aws:s3:::{id}/*"]
         }]
-    }))
+    })),
+    opts=pulumi.ResourceOptions(depends_on=[website_bucket])
 )
 
 # 6. Create an Origin Access Identity (OAI) for CloudFront.
@@ -95,7 +95,8 @@ cdn = cloudfront.Distribution("cdn",
     ),
     viewer_certificate=cloudfront.DistributionViewerCertificateArgs(
         cloudfront_default_certificate=True
-    )
+    ),
+    opts=pulumi.ResourceOptions(depends_on=[website_bucket])
 )
 
 # 8. Function to upload files from a directory to the website bucket.
@@ -114,7 +115,8 @@ def upload_directory_to_s3(directory_path, bucket_name):
                 relative_path,
                 bucket=bucket_name,
                 source=pulumi.FileAsset(file_path),
-                content_type=content_type
+                content_type=content_type,
+                opts=pulumi.ResourceOptions(depends_on=[website_bucket])
             )
 
 # 9. Upload the website files from a local "website" directory.
