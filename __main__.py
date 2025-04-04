@@ -1,90 +1,49 @@
+import os
 import pulumi
 import pulumi_aws as aws
-from pulumi_synced_folder import S3BucketFolder
 
-# Import the program's configuration settings.
-config = pulumi.Config()
-path = config.get("path") or "./website"
-index_document = config.get("indexDocument") or "index.html"
-error_document = config.get("errorDocument") or "error.html"
+# Create the S3 bucket
+bucket = aws.s3.Bucket("bucket")
 
-# Create an S3 bucket and configure it as a website.
-bucket = aws.s3.BucketV2("bucket")
-
-bucket_website = aws.s3.BucketWebsiteConfigurationV2("bucketWebsite",
-    bucket=bucket.bucket,
-    index_document=aws.s3.BucketWebsiteConfigurationV2IndexDocumentArgs(suffix=index_document),
-    error_document=aws.s3.BucketWebsiteConfigurationV2ErrorDocumentArgs(key=error_document),
-)
-
-# Configure ownership controls for the new S3 bucket.
-ownership_controls = aws.s3.BucketOwnershipControls("ownership-controls",
+# Set ownership controls
+ownership_controls = aws.s3.BucketOwnershipControls(
+    "ownership-controls",
     bucket=bucket.bucket,
     rule=aws.s3.BucketOwnershipControlsRuleArgs(
-        object_ownership="ObjectWriter"
+        object_ownership="BucketOwnerPreferred"
     )
 )
 
-# Configure public ACL block on the new S3 bucket.
-public_access_block = aws.s3.BucketPublicAccessBlock("public-access-block",
+# Configure public access block
+public_access_block = aws.s3.BucketPublicAccessBlock(
+    "public-access-block",
     bucket=bucket.bucket,
-    block_public_acls=False
+    block_public_acls=False,
+    block_public_policy=False,
+    ignore_public_acls=False,
+    restrict_public_buckets=False
 )
 
-# Use a synced folder to manage the files of the website.
-bucket_folder = S3BucketFolder("bucket-folder",
-    path=path,
-    bucket_name=bucket.bucket,
-    acl="public-read",
-    opts=pulumi.ResourceOptions(depends_on=[ownership_controls, public_access_block])
-)
-
-# Create a CloudFront CDN to distribute and cache the website.
-cdn = aws.cloudfront.Distribution("cdn",
-    enabled=True,
-    origins=[aws.cloudfront.DistributionOriginArgs(
-        origin_id=bucket.arn,
-        domain_name=bucket_website.website_endpoint,
-        custom_origin_config=aws.cloudfront.DistributionOriginCustomOriginConfigArgs(
-            origin_protocol_policy="http-only",
-            http_port=80,
-            https_port=443,
-            origin_ssl_protocols=["TLSv1.2"]
-        )
-    )],
-    default_cache_behavior=aws.cloudfront.DistributionDefaultCacheBehaviorArgs(
-        target_origin_id=bucket.arn,
-        viewer_protocol_policy="redirect-to-https",
-        allowed_methods=["GET", "HEAD", "OPTIONS"],
-        cached_methods=["GET", "HEAD", "OPTIONS"],
-        default_ttl=600,
-        max_ttl=600,
-        min_ttl=600,
-        forwarded_values=aws.cloudfront.DistributionDefaultCacheBehaviorForwardedValuesArgs(
-            query_string=True,
-            cookies=aws.cloudfront.DistributionDefaultCacheBehaviorForwardedValuesCookiesArgs(
-                forward="all"
+# Function to sync local folder to S3
+def sync_folder_to_s3(local_path, bucket_name, depends_on):
+    for root, dirs, files in os.walk(local_path):
+        for file in files:
+            local_file_path = os.path.join(root, file)
+            s3_key = os.path.relpath(local_file_path, local_path)
+            aws.s3.BucketObject(
+                s3_key,
+                bucket=bucket_name,
+                key=s3_key,
+                source=pulumi.FileAsset(local_file_path),
+                acl="public-read",
+                opts=pulumi.ResourceOptions(depends_on=depends_on)
             )
-        )
-    ),
-    price_class="PriceClass_100",
-    custom_error_responses=[aws.cloudfront.DistributionCustomErrorResponseArgs(
-        error_code=404,
-        response_code=404,
-        response_page_path=f"/{error_document}"
-    )],
-    restrictions=aws.cloudfront.DistributionRestrictionsArgs(
-        geo_restriction=aws.cloudfront.DistributionRestrictionsGeoRestrictionArgs(
-            restriction_type="none"
-        )
-    ),
-    viewer_certificate=aws.cloudfront.DistributionViewerCertificateArgs(
-        cloudfront_default_certificate=True
-    )
-)
 
-# Export the URLs and hostnames of the bucket and distribution.
-pulumi.export("originURL", pulumi.Output.concat("http://", bucket_website.website_endpoint))
-pulumi.export("originHostname", bucket_website.website_endpoint)
-pulumi.export("cdnURL", pulumi.Output.concat("https://", cdn.domain_name))
-pulumi.export("cdnHostname", cdn.domain_name)
+# Specify the local folder path to sync
+path = "./path-to-your-folder"  # Replace with your actual folder path
+
+# Sync the folder to the S3 bucket
+sync_folder_to_s3(path, bucket.bucket, [ownership_controls, public_access_block])
+
+# Export the bucket name (optional)
+pulumi.export("bucket_name", bucket.bucket)
