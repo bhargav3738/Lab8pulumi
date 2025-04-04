@@ -15,11 +15,17 @@ bucket_object = aws.s3.BucketObject("index.html",
     content_type="text/html",
 )
 
-# Create a CloudFront distribution to serve the S3 content
+# Create an Origin Access Identity
+oai = aws.cloudfront.OriginAccessIdentity("originAccessIdentity")
+
+# Create a CloudFront distribution with OAI
 distribution = aws.cloudfront.Distribution("my-distribution",
     origins=[aws.cloudfront.DistributionOriginArgs(
         domain_name=bucket.bucket_regional_domain_name,
         origin_id=bucket.arn,
+        s3_origin_config=aws.cloudfront.DistributionOriginS3OriginConfigArgs(
+            origin_access_identity=oai.cloudfront_access_identity_path,
+        ),
     )],
     enabled=True,
     default_root_object="index.html",
